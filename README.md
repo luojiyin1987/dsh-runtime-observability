@@ -4,7 +4,7 @@ Runtime observability plugin for [DeepSeek Harness](https://github.com/deepseek-
 
 ## Status
 
-Early development. PR1 established the standalone plugin lifecycle and packaging contract. PR2 added backend-neutral `tools/execute` lifecycle aggregation. PR3 projects the same metadata-only lifecycle into OpenTelemetry Metrics. PR4 adds OpenTelemetry spans around each tool dispatch. PR5 traces Agent turns, steps, and Agent-loop model requests. PR6 adds a reproducible local OpenTelemetry observability stack. PR7 adds a real Harness Runtime end-to-end observability gate.
+Early development. PR1 established the standalone plugin lifecycle and packaging contract. PR2 added backend-neutral `tools/execute` lifecycle aggregation. PR3 projects the same metadata-only lifecycle into OpenTelemetry Metrics. PR4 adds OpenTelemetry spans around each tool dispatch. PR5 traces Agent turns, steps, and Agent-loop model requests. PR6 adds a reproducible local OpenTelemetry observability stack. PR7 adds a real Harness Runtime end-to-end observability gate. PR8 adds a provisioned Grafana runtime dashboard and trace-to-metrics drill-down.
 
 ## Current scope
 
@@ -17,6 +17,7 @@ Early development. PR1 established the standalone plugin lifecycle and packaging
 - OpenTelemetry Counter / UpDownCounter / Histogram instruments
 - OpenTelemetry tool and Agent lifecycle spans
 - local Collector / Jaeger / Prometheus / Grafana example
+- provisioned Grafana runtime dashboard with Jaeger-to-Prometheus trace correlation
 - real DeepSeek Harness Agent-loop E2E through Collector, Jaeger, and Prometheus
 - Node.js 22/24 CI for typecheck, tests, build, and package dry-run
 - DSH bundle patch metadata
@@ -143,16 +144,18 @@ OpenTelemetry Collector
                             Grafana
 ```
 
-The example keeps exporter/SDK ownership outside the plugin. It provisions Prometheus and Jaeger as Grafana data sources and binds host-facing ports to loopback for local development.
+The example keeps exporter/SDK ownership outside the plugin. It provisions Prometheus and Jaeger as Grafana data sources, a **DeepSeek Harness Runtime Observability** dashboard, and Jaeger trace-to-metrics correlation. Host-facing ports bind to loopback for local development.
 
 ```sh
 cd examples/otel-stack
 docker compose up -d
 ```
 
+Open the provisioned dashboard at <http://localhost:3000/d/dsh-runtime-observability>. It shows tool call/error rates, active calls, per-tool outcomes, and p50/p95/p99 duration. A `Tool` variable narrows the Prometheus panels, while Jaeger tool spans can drill down into matching Prometheus queries through the `tool.name` → `tool_name` mapping.
+
 ## Real Harness Runtime E2E
 
-`e2e/runtime-observability.e2e.ts` composes the public DeepSeek Harness runtime services used by the real Agent loop: LLM, Session, Session Projection, System Prompt, Tools, Agent Registry, and Agent Loop. A deterministic local adapter produces one tool call, the registered tool executes, and the same Agent turn makes a second model request to finish.
+`e2e/runtime-observability.test.ts` composes the public DeepSeek Harness runtime services used by the real Agent loop: LLM, Session, Session Projection, System Prompt, Tools, Agent Registry, and Agent Loop. A deterministic local adapter produces one tool call, the registered tool executes, and the same Agent turn makes a second model request to finish.
 
 The E2E host owns the OpenTelemetry SDK and OTLP exporters, matching the plugin's production ownership boundary. Telemetry flows through the Docker stack rather than an in-memory test exporter:
 
@@ -189,6 +192,7 @@ Implemented sequence:
 5. Instrument Agent turn/step/model-request lifecycle. ✅
 6. Add a local Collector/Prometheus/Jaeger/Grafana example. ✅
 7. Prove the full observability path with a real Harness Runtime E2E gate. ✅
+8. Add an operator-facing Grafana runtime dashboard and trace-to-metrics drill-down. ✅
 
 ## Privacy boundary
 
