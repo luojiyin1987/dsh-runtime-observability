@@ -42,9 +42,55 @@ Configure the DeepSeek Harness host's OpenTelemetry SDK to export traces and met
 
 The exact exporter setup belongs to the host SDK. Set a useful OpenTelemetry `service.name` resource such as `deepseek-harness`; Jaeger uses that resource when listing services.
 
-## Inspect traces
+## Grafana runtime dashboard
 
-Open <http://localhost:16686> or use the provisioned Jaeger data source in Grafana.
+Open <http://localhost:3000/d/dsh-runtime-observability> with the local-only credentials:
+
+```text
+username: admin
+password: admin
+```
+
+The provisioned **DeepSeek Harness Runtime Observability** dashboard provides:
+
+- total tool-call rate
+- tool-error rate
+- currently active tool calls
+- call rate grouped by `tool_name` and `outcome`
+- p50 / p95 / p99 tool execution duration
+- error rate grouped by tool
+- a `Tool` variable for narrowing all panels
+- a dashboard link to Jaeger
+
+The Prometheus exporter uses the default OpenTelemetry-to-Prometheus translation, so the dashboard queries these series:
+
+```promql
+dsh_tool_calls_total
+dsh_tool_errors_total
+dsh_tool_active
+dsh_tool_duration_milliseconds_bucket
+```
+
+Example queries:
+
+```promql
+sum by (tool_name, outcome) (
+  rate(dsh_tool_calls_total[$__rate_interval])
+)
+```
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le, tool_name) (
+    rate(dsh_tool_duration_milliseconds_bucket[$__rate_interval])
+  )
+)
+```
+
+## Trace drill-down
+
+Open <http://localhost:16686> for the Jaeger UI, or use the provisioned Jaeger data source in Grafana Explore.
 
 A tool-using Agent turn should have this shape:
 
@@ -55,18 +101,13 @@ dsh.agent.turn
     └── dsh.tool.execute
 ```
 
+The Jaeger data source is provisioned with trace-to-metrics correlation. For a `dsh.tool.execute` span, Grafana maps the span attribute `tool.name` to the Prometheus label `tool_name` and offers linked queries for tool call rate and p95 tool duration.
+
 The plugin does not export session ids, prompts, messages, tool arguments/results, exception messages, or stack traces.
 
-## Inspect metrics
+## Inspect metrics directly
 
-Open <http://localhost:9090> and search for metric names beginning with `dsh_tool` after the host has exported at least one completed tool call. The Collector's Prometheus exporter translates OpenTelemetry metric names to Prometheus-compatible names.
-
-Grafana is available at <http://localhost:3000> with the local-only credentials:
-
-```text
-username: admin
-password: admin
-```
+Open <http://localhost:9090> and search for metric names beginning with `dsh_tool` after the host has exported at least one completed tool call.
 
 Prometheus and Jaeger are provisioned automatically as Grafana data sources, so Explore can query both without manual setup.
 
@@ -84,7 +125,7 @@ docker compose down -v
 
 ## Validate configuration
 
-The repository CI runs the same semantic checks used here:
+The repository CI validates the Compose model, Collector config, Prometheus config, and Grafana dashboard provisioning. The component-level checks can also be run manually:
 
 ```sh
 docker compose -f examples/otel-stack/compose.yaml config
@@ -100,5 +141,7 @@ docker run --rm \
   prom/prometheus:v3.14.0 \
   check config /etc/prometheus/prometheus.yml
 ```
+
+Grafana provisioning is validated by starting the pinned Compose stack and querying the Grafana HTTP API for dashboard UID `dsh-runtime-observability` and the Jaeger data source.
 
 This example is for local development and demonstrations, not a production monitoring deployment.
