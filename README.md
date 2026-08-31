@@ -4,21 +4,19 @@ Runtime observability plugin for [DeepSeek Harness](https://github.com/deepseek-
 
 ## Status
 
-Early development. PR1 established the standalone plugin lifecycle and packaging contract. PR2 instruments the `tools/execute` around-dispatch seam with a backend-neutral in-memory aggregate.
+Early development. PR1 established the standalone plugin lifecycle and packaging contract. PR2 added backend-neutral `tools/execute` lifecycle aggregation. PR3 projects the same metadata-only lifecycle into OpenTelemetry Metrics.
 
 ## Current scope
 
 - ESM TypeScript package
 - hard dependency on the Harness `tools` service via `inject`
 - `tools/execute` around-dispatch instrumentation
-- active tool-call gauges
-- completed call and error counters
-- aggregate execution duration globally and per tool
-- lifecycle-owned `dshRuntimeObservability` Cordis service
+- backend-neutral runtime snapshot
+- OpenTelemetry Counter / UpDownCounter / Histogram instruments
 - Node.js 22/24 CI for typecheck, tests, build, and package dry-run
 - DSH bundle patch metadata
 
-No OpenTelemetry exporter is included yet. The current service exposes a snapshot that PR3 can project into OTel instruments without changing the collection boundary.
+The plugin does **not** create a global `MeterProvider`, configure an OTLP endpoint, or own process-wide OpenTelemetry SDK setup. It uses the provider configured by the host application. Without one, the OpenTelemetry API behaves as a no-op while the in-memory snapshot remains available.
 
 ## Development
 
@@ -54,6 +52,21 @@ A snapshot has this shape:
 }
 ```
 
+## OpenTelemetry metrics
+
+PR3 emits four instruments from the same tool lifecycle:
+
+| Instrument | Type | Unit | Attributes |
+| --- | --- | --- | --- |
+| `dsh.tool.active` | UpDownCounter | `{call}` | `tool.name` |
+| `dsh.tool.calls` | Counter | `{call}` | `tool.name`, `outcome` |
+| `dsh.tool.errors` | Counter | `{call}` | `tool.name` |
+| `dsh.tool.duration` | Histogram | `ms` | `tool.name`, `outcome` |
+
+`outcome` is either `success` or `error`. The histogram records each completed call directly; it is not reconstructed from the cumulative snapshot, so backends retain a real duration distribution.
+
+The default instrumentation scope is `dsh-runtime-observability`. Applications remain responsible for configuring their preferred OpenTelemetry SDK, MetricReader, and exporter.
+
 ## Design direction
 
 The project complements DeepSeek Harness session telemetry by instrumenting runtime execution rather than copying prompt, tool argument, or tool result payloads.
@@ -62,14 +75,14 @@ Planned sequence:
 
 1. Bootstrap plugin lifecycle and packaging. ✅
 2. Measure tool execution duration and active calls through `tools/execute`. ✅
-3. Export OpenTelemetry metrics.
+3. Export runtime metrics through OpenTelemetry instruments. ✅
 4. Add tool execution spans.
 5. Instrument agent turn/step/request lifecycle.
 6. Add a local Collector/Prometheus/Jaeger/Grafana example.
 
 ## Privacy boundary
 
-Telemetry is metadata-first. Prompt content, tool arguments, tool result content, credentials, filesystem contents, and exception messages are out of scope by default.
+Telemetry is metadata-first. Prompt content, tool arguments, tool result content, credentials, filesystem contents, and exception messages are out of scope by default. Lifecycle exporter failures are contained and must not change the outcome of the underlying tool call.
 
 ## License
 
