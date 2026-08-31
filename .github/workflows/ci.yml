@@ -40,3 +40,34 @@ jobs:
             --entrypoint /bin/promtool \
             prom/prometheus:v3.14.0 \
             check config /etc/prometheus/prometheus.yml
+
+  harness-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install
+      - name: Start local observability stack
+        run: docker compose -f examples/otel-stack/compose.yaml up -d
+      - name: Wait for local observability stack
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:8889/metrics >/dev/null \
+              && curl --fail --silent --show-error http://127.0.0.1:16686/ >/dev/null \
+              && curl --fail --silent --show-error http://127.0.0.1:9090/-/ready >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose -f examples/otel-stack/compose.yaml ps
+          exit 1
+      - name: Run real Harness observability E2E
+        run: npm run test:e2e
+      - name: Dump observability stack logs on failure
+        if: failure()
+        run: docker compose -f examples/otel-stack/compose.yaml logs --no-color
+      - name: Stop local observability stack
+        if: always()
+        run: docker compose -f examples/otel-stack/compose.yaml down -v

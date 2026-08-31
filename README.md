@@ -4,7 +4,7 @@ Runtime observability plugin for [DeepSeek Harness](https://github.com/deepseek-
 
 ## Status
 
-Early development. PR1 established the standalone plugin lifecycle and packaging contract. PR2 added backend-neutral `tools/execute` lifecycle aggregation. PR3 projects the same metadata-only lifecycle into OpenTelemetry Metrics. PR4 adds OpenTelemetry spans around each tool dispatch. PR5 traces Agent turns, steps, and Agent-loop model requests. PR6 adds a reproducible local OpenTelemetry observability stack.
+Early development. PR1 established the standalone plugin lifecycle and packaging contract. PR2 added backend-neutral `tools/execute` lifecycle aggregation. PR3 projects the same metadata-only lifecycle into OpenTelemetry Metrics. PR4 adds OpenTelemetry spans around each tool dispatch. PR5 traces Agent turns, steps, and Agent-loop model requests. PR6 adds a reproducible local OpenTelemetry observability stack. PR7 adds a real Harness Runtime end-to-end observability gate.
 
 ## Current scope
 
@@ -17,6 +17,7 @@ Early development. PR1 established the standalone plugin lifecycle and packaging
 - OpenTelemetry Counter / UpDownCounter / Histogram instruments
 - OpenTelemetry tool and Agent lifecycle spans
 - local Collector / Jaeger / Prometheus / Grafana example
+- real DeepSeek Harness Agent-loop E2E through Collector, Jaeger, and Prometheus
 - Node.js 22/24 CI for typecheck, tests, build, and package dry-run
 - DSH bundle patch metadata
 
@@ -27,6 +28,14 @@ The plugin does **not** create global `MeterProvider` / `TracerProvider` instanc
 ```sh
 npm install
 npm run check
+```
+
+The system E2E is intentionally separate from the normal unit/build gate because it requires the local observability stack:
+
+```sh
+docker compose -f examples/otel-stack/compose.yaml up -d
+npm run test:e2e
+docker compose -f examples/otel-stack/compose.yaml down -v
 ```
 
 ## Runtime snapshot
@@ -69,7 +78,7 @@ A snapshot has this shape:
 
 ## OpenTelemetry tracing
 
-The runtime trace now follows the Agent execution hierarchy:
+The runtime trace follows the Agent execution hierarchy:
 
 ```text
 dsh.agent.turn
@@ -102,7 +111,7 @@ The session id is used only as a process-local correlation key and is not export
 
 ### LLM request spans
 
-`agent/request` is a call-configuration waterfall, not the model call itself. PR5 therefore instruments `llm/stream`, the around-dispatch seam that encloses the actual streaming request, and emits `dsh.llm.request` with:
+`agent/request` is a call-configuration waterfall, not the model call itself. The plugin therefore instruments `llm/stream`, the around-dispatch seam that encloses the actual streaming request, and emits `dsh.llm.request` with:
 
 - `llm.provider`
 - `llm.model`
@@ -141,11 +150,37 @@ cd examples/otel-stack
 docker compose up -d
 ```
 
+## Real Harness Runtime E2E
+
+`e2e/runtime-observability.e2e.ts` composes the public DeepSeek Harness runtime services used by the real Agent loop: LLM, Session, Session Projection, System Prompt, Tools, Agent Registry, and Agent Loop. A deterministic local adapter produces one tool call, the registered tool executes, and the same Agent turn makes a second model request to finish.
+
+The E2E host owns the OpenTelemetry SDK and OTLP exporters, matching the plugin's production ownership boundary. Telemetry flows through the Docker stack rather than an in-memory test exporter:
+
+```text
+real DSH Agent turn
+  -> OTLP/HTTP
+  -> Collector
+  -> Jaeger + Prometheus
+```
+
+The gate verifies:
+
+- one `dsh.agent.turn`
+- one `dsh.agent.step`
+- two `dsh.llm.request` spans
+- one `dsh.tool.execute` span
+- all runtime spans are present in one Jaeger trace
+- Prometheus receives a successful tool-call counter
+- the plugin snapshot reports one completed tool call and zero active/error calls
+- prompt text, tool arguments, tool result text, and session id are absent from exported telemetry
+
+The adapter and tool are deterministic fixtures only; orchestration, session boundaries, tool dispatch, Agent-loop request marking, plugin hooks, OTLP transport, Collector processing, Jaeger ingestion, and Prometheus scraping are real runtime paths.
+
 ## Design direction
 
 The project complements DeepSeek Harness session telemetry by instrumenting runtime execution rather than copying prompt, tool argument, or tool result payloads.
 
-Planned sequence:
+Implemented sequence:
 
 1. Bootstrap plugin lifecycle and packaging. ✅
 2. Measure tool execution duration and active calls through `tools/execute`. ✅
@@ -153,6 +188,7 @@ Planned sequence:
 4. Add tool execution spans. ✅
 5. Instrument Agent turn/step/model-request lifecycle. ✅
 6. Add a local Collector/Prometheus/Jaeger/Grafana example. ✅
+7. Prove the full observability path with a real Harness Runtime E2E gate. ✅
 
 ## Privacy boundary
 
