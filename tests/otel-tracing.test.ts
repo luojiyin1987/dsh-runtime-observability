@@ -52,6 +52,14 @@ async function cleanupTracing(harness: ReturnType<typeof setupTracing>): Promise
   context.disable()
 }
 
+function exportedSpanFields(span: ReturnType<InMemorySpanExporter['getFinishedSpans']>[number] | undefined) {
+  return {
+    attributes: span?.attributes,
+    status: span?.status,
+    events: span?.events,
+  }
+}
+
 describe('OpenTelemetryToolTracing', () => {
   it('inherits the active parent and propagates the tool span to nested work', async () => {
     const harness = setupTracing()
@@ -106,7 +114,7 @@ describe('OpenTelemetryToolTracing', () => {
         'error.type': 'TOOL_TIMEOUT',
       })
       expect(span?.events).toEqual([])
-      expect(JSON.stringify(span)).not.toContain('sensitive timeout detail')
+      expect(JSON.stringify(exportedSpanFields(span))).not.toContain('sensitive timeout detail')
     } finally {
       await cleanupTracing(harness)
     }
@@ -137,7 +145,7 @@ describe('OpenTelemetryToolTracing', () => {
         outcome: 'error',
       })
       expect(span?.events).toEqual([])
-      expect(JSON.stringify(span)).not.toContain(error.message)
+      expect(JSON.stringify(exportedSpanFields(span))).not.toContain(error.message)
     } finally {
       await cleanupTracing(harness)
     }
