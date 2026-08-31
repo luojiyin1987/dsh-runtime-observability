@@ -1,0 +1,4 @@
+# DeepSeek Harness bundle patch.
+- insert:
+    - id: runtime-observability
+      name: 'dsh-runtime-observability'
