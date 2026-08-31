@@ -11,6 +11,21 @@ export interface RuntimeObservabilitySnapshot extends ToolExecutionStats {
   readonly tools: Readonly<Record<string, ToolExecutionStats>>
 }
 
+export interface ToolExecutionStarted {
+  readonly toolName: string
+}
+
+export interface ToolExecutionCompleted extends ToolExecutionStarted {
+  readonly durationMs: number
+  readonly isError: boolean
+}
+
+/** Metadata-only lifecycle sink for one observed tool execution. */
+export interface ToolExecutionLifecycleSink {
+  onStart?(event: ToolExecutionStarted): void
+  onComplete?(event: ToolExecutionCompleted): void
+}
+
 type Clock = () => number
 
 interface MutableToolExecutionStats {
@@ -28,14 +43,26 @@ function emptyStats(): MutableToolExecutionStats {
  * Backend-neutral aggregate of tool execution lifecycle metadata.
  *
  * The observer deliberately stores no arguments, result content, prompts, or
- * exception messages. PR3 can project these counters and durations into an
- * OpenTelemetry backend without widening the data boundary established here.
+ * exception messages. Lifecycle sinks receive only tool name, duration, and
+ * outcome so exporters can preserve the same privacy boundary.
  */
 export class ToolExecutionObserver {
   private readonly byTool = new Map<string, MutableToolExecutionStats>()
   private readonly total = emptyStats()
+  private readonly sinks = new Set<ToolExecutionLifecycleSink>()
 
   constructor(private readonly clock: Clock = performance.now.bind(performance)) {}
+
+  /** Subscribe a metadata-only lifecycle sink. */
+  addSink(sink: ToolExecutionLifecycleSink): () => void {
+    this.sinks.add(sink)
+    let active = true
+    return () => {
+      if (!active) return
+      active = false
+      this.sinks.delete(sink)
+    }
+  }
 
   /**
    * Wrap one `tools/execute` delegation and preserve its exact result/error
@@ -47,19 +74,20 @@ export class ToolExecutionObserver {
   ): Promise<ToolExecutionResult> {
     const tool = this.statsFor(toolName)
     const startedAt = this.clock()
+    const sinks = this.startSinks(toolName)
 
     this.total.active += 1
     tool.active += 1
 
     try {
       const result = await next()
-      this.finish(tool, startedAt, result.isError)
+      this.finish(toolName, tool, startedAt, result.isError, sinks)
       return result
     } catch (error) {
       // A tool body is normally normalized into ToolExecutionResult by the
       // registry. A downstream around-dispatch wrapper may still throw, so the
       // observer must restore active gauges and count that terminal path too.
-      this.finish(tool, startedAt, true)
+      this.finish(toolName, tool, startedAt, true, sinks)
       throw error
     }
   }
@@ -75,6 +103,23 @@ export class ToolExecutionObserver {
     })
   }
 
+  private startSinks(toolName: string): ToolExecutionLifecycleSink[] {
+    const event = Object.freeze({ toolName })
+    const accepted: ToolExecutionLifecycleSink[] = []
+
+    for (const sink of this.sinks) {
+      try {
+        sink.onStart?.(event)
+        accepted.push(sink)
+      } catch {
+        // Observability must never change tool execution semantics. If a sink
+        // rejects start, omit its completion too so active gauges stay balanced.
+      }
+    }
+
+    return accepted
+  }
+
   private statsFor(toolName: string): MutableToolExecutionStats {
     let stats = this.byTool.get(toolName)
     if (stats === undefined) {
@@ -85,9 +130,11 @@ export class ToolExecutionObserver {
   }
 
   private finish(
+    toolName: string,
     tool: MutableToolExecutionStats,
     startedAt: number,
     isError: boolean,
+    sinks: readonly ToolExecutionLifecycleSink[],
   ): void {
     const durationMs = Math.max(0, this.clock() - startedAt)
 
@@ -102,6 +149,15 @@ export class ToolExecutionObserver {
     if (isError) {
       this.total.errors += 1
       tool.errors += 1
+    }
+
+    const event = Object.freeze({ toolName, durationMs, isError })
+    for (const sink of sinks) {
+      try {
+        sink.onComplete?.(event)
+      } catch {
+        // Export failures are contained: telemetry must not fail a tool call.
+      }
     }
   }
 

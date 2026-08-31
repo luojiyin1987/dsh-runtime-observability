@@ -124,4 +124,44 @@ describe('ToolExecutionObserver', () => {
       },
     })
   })
+
+  it('emits metadata-only lifecycle events with the measured duration', async () => {
+    let now = 7
+    const observer = new ToolExecutionObserver(() => now)
+    const events: unknown[] = []
+
+    observer.addSink({
+      onStart(event) {
+        events.push(event)
+      },
+      onComplete(event) {
+        events.push(event)
+      },
+    })
+
+    await observer.observe('bash', async () => {
+      now = 19
+      return failure
+    })
+
+    expect(events).toEqual([
+      { toolName: 'bash' },
+      { toolName: 'bash', durationMs: 12, isError: true },
+    ])
+  })
+
+  it('contains lifecycle sink failures so telemetry cannot fail a tool call', async () => {
+    const observer = new ToolExecutionObserver(() => 1)
+    observer.addSink({
+      onStart() {
+        throw new Error('exporter unavailable')
+      },
+      onComplete() {
+        throw new Error('must not be reached after rejected start')
+      },
+    })
+
+    await expect(observer.observe('bash', async () => success)).resolves.toBe(success)
+    expect(observer.snapshot().calls).toBe(1)
+  })
 })
