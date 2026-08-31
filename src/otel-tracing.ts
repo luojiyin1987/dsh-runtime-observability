@@ -46,6 +46,7 @@ export class OpenTelemetryToolTracing {
   async trace(
     toolName: string,
     next: () => Promise<ToolExecutionResult>,
+    parentContext: OtelContext = context.active(),
   ): Promise<ToolExecutionResult> {
     let span: Span | undefined
     let spanContext: OtelContext
@@ -57,9 +58,9 @@ export class OpenTelemetryToolTracing {
           kind: SpanKind.INTERNAL,
           attributes: { [TOOL_NAME_ATTRIBUTE]: toolName },
         },
-        context.active(),
+        parentContext,
       )
-      spanContext = trace.setSpan(context.active(), span)
+      spanContext = trace.setSpan(parentContext, span)
     } catch {
       // Instrumentation failed before application work started. Ending a span
       // is best-effort, then the tool runs exactly once without tracing.
