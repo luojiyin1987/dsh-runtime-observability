@@ -50,6 +50,21 @@ function pluginModule() {
   return { name, inject, apply }
 }
 
+/**
+ * Some developer-preview agent-loop builds read `ctx.sessionProjections` but
+ * shipped stale Cordis inject metadata that omitted the capability. Keep the
+ * E2E on public packages while making that known alpha skew explicit. Once the
+ * published metadata includes the dependency, this returns AgentLoop unchanged.
+ */
+function compatibleAgentLoop() {
+  const declared = AgentLoop.inject
+  if (declared.includes('sessionProjections')) return AgentLoop
+
+  return class AgentLoopWithSessionProjection extends AgentLoop {
+    static override inject = [...declared, 'sessionProjections']
+  }
+}
+
 function waitForIdle(ctx: Context, agent: Agent): Promise<void> {
   return new Promise((resolve) => {
     const dispose = ctx.on('agent/status', ({ agent: subject, status }) => {
@@ -143,7 +158,9 @@ async function mountHarness(adapter: DeterministicAdapter): Promise<Context> {
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(pluginModule())
-  await ctx.plugin(AgentLoop, { agents: [] })
+
+  expect(ctx.get('sessionProjections')).toBeDefined()
+  await ctx.plugin(compatibleAgentLoop(), { agents: [] })
   ctx.llm.registerAdapter(['mock'], adapter)
   return ctx
 }
