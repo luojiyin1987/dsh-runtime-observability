@@ -17,3 +17,20 @@ datasources:
     access: proxy
     url: http://jaeger:16686
     editable: false
+    jsonData:
+      nodeGraph:
+        enabled: true
+      traceIdTimeParams:
+        enabled: true
+      tracesToMetrics:
+        datasourceUid: prometheus
+        spanStartTimeShift: '-2m'
+        spanEndTimeShift: '2m'
+        tags:
+          - key: tool.name
+            value: tool_name
+        queries:
+          - name: Tool call rate
+            query: 'sum(rate(dsh_tool_calls_total{$$__tags}[5m]))'
+          - name: Tool p95 duration
+            query: 'histogram_quantile(0.95, sum by (le, tool_name) (rate(dsh_tool_duration_milliseconds_bucket{$$__tags}[5m])))'

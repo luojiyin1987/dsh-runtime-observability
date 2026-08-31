@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Validate dashboard JSON
+        run: python -m json.tool examples/otel-stack/grafana/dashboards/runtime-observability.json >/dev/null
       - name: Validate Docker Compose model
         run: docker compose -f examples/otel-stack/compose.yaml config
       - name: Validate OpenTelemetry Collector config
@@ -40,6 +42,31 @@ jobs:
             --entrypoint /bin/promtool \
             prom/prometheus:v3.14.0 \
             check config /etc/prometheus/prometheus.yml
+      - name: Start Grafana provisioning smoke test
+        run: docker compose -f examples/otel-stack/compose.yaml up -d grafana
+      - name: Verify Grafana dashboard and trace correlation provisioning
+        run: |
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent --show-error -u admin:admin http://127.0.0.1:3000/api/health >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 45 ]; then
+              docker compose -f examples/otel-stack/compose.yaml logs --no-color grafana
+              exit 1
+            fi
+            sleep 1
+          done
+
+          curl --fail --silent --show-error -u admin:admin \
+            http://127.0.0.1:3000/api/dashboards/uid/dsh-runtime-observability \
+            | grep -F '"title":"DeepSeek Harness Runtime Observability"'
+
+          curl --fail --silent --show-error -u admin:admin \
+            http://127.0.0.1:3000/api/datasources/uid/jaeger \
+            | grep -F '"datasourceUid":"prometheus"'
+      - name: Stop Grafana provisioning smoke test
+        if: always()
+        run: docker compose -f examples/otel-stack/compose.yaml down -v
 
   harness-e2e:
     runs-on: ubuntu-latest
