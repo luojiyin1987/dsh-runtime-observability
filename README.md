@@ -4,16 +4,18 @@ Runtime observability plugin for [DeepSeek Harness](https://github.com/deepseek-
 
 ## Status
 
-Early development. PR1 established the standalone plugin lifecycle and packaging contract. PR2 added backend-neutral `tools/execute` lifecycle aggregation. PR3 projects the same metadata-only lifecycle into OpenTelemetry Metrics. PR4 adds OpenTelemetry spans around each tool dispatch.
+Early development. PR1 established the standalone plugin lifecycle and packaging contract. PR2 added backend-neutral `tools/execute` lifecycle aggregation. PR3 projects the same metadata-only lifecycle into OpenTelemetry Metrics. PR4 adds OpenTelemetry spans around each tool dispatch. PR5 traces Agent turns, steps, and Agent-loop model requests.
 
 ## Current scope
 
 - ESM TypeScript package
-- hard dependency on the Harness `tools` service via `inject`
+- hard dependencies on the Harness `tools`, `sessions`, and `llm` services via `inject`
 - `tools/execute` around-dispatch instrumentation
+- durable `session/event` observation for Agent turn/step boundaries
+- `llm/stream` around-dispatch instrumentation for real model-call latency
 - backend-neutral runtime snapshot
 - OpenTelemetry Counter / UpDownCounter / Histogram instruments
-- OpenTelemetry `dsh.tool.execute` spans with parent-context propagation
+- OpenTelemetry tool and Agent lifecycle spans
 - Node.js 22/24 CI for typecheck, tests, build, and package dry-run
 - DSH bundle patch metadata
 
@@ -66,15 +68,19 @@ A snapshot has this shape:
 
 ## OpenTelemetry tracing
 
-PR4 wraps the same `tools/execute` delegation in one internal span:
+The runtime trace now follows the Agent execution hierarchy:
 
 ```text
-parent span
-└── dsh.tool.execute
-    └── nested work / child spans
+dsh.agent.turn
+└── dsh.agent.step
+    ├── dsh.llm.request
+    └── dsh.tool.execute
+        └── nested work / child spans
 ```
 
-The span uses the instrumentation scope `dsh-runtime-observability` and records only metadata:
+### Tool spans
+
+Each `tools/execute` delegation produces one `dsh.tool.execute` span carrying only metadata:
 
 - `tool.name`
 - `outcome = success | error`
@@ -82,9 +88,31 @@ The span uses the instrumentation scope `dsh-runtime-observability` and records 
 
 Normalized failures receive OpenTelemetry `ERROR` status. A thrown downstream wrapper error also marks the span as `ERROR`, but the plugin deliberately does not call `recordException()` because exception events may contain sensitive messages and stack traces.
 
-The tool span inherits the host application's currently active OpenTelemetry context and remains active while `next()` runs, so nested instrumentation automatically becomes a child. Concurrent tool calls therefore receive independent span contexts.
+### Agent turn and step spans
 
-Tracing setup failures are contained. The plugin only falls back to untraced execution when instrumentation fails **before** `next()` starts; once application work has begun it is never retried, preventing duplicate side effects.
+DeepSeek Harness records `turn/start`, `step/start`, `step/end`, and `turn/end` as durable session events. The plugin observes the post-commit `session/event` feed and creates:
+
+- `dsh.agent.turn` with `agent.turn` and terminal `outcome`
+- `dsh.agent.step` with `agent.turn`, `agent.step`, and `outcome`
+
+Turn and step span timestamps come from each durable `SessionEvent.time`, not from observer callback wall-clock time, so asynchronous notification delay does not inflate lifecycle latency.
+
+The session id is used only as a process-local correlation key and is not exported as a span attribute.
+
+### LLM request spans
+
+`agent/request` is a call-configuration waterfall, not the model call itself. PR5 therefore instruments `llm/stream`, the around-dispatch seam that encloses the actual streaming request, and emits `dsh.llm.request` with:
+
+- `llm.provider`
+- `llm.model`
+- bounded terminal `outcome`
+- structured `error.type` when available
+
+Only requests marked by DeepSeek Harness as Agent-loop requests and carrying a loop-supplied `sessionId` are traced. Auxiliary one-shot model calls are deliberately excluded.
+
+The LLM span is explicitly parented to the current step context. Tool spans use the same process-local session correlation, so concurrent sessions remain isolated even when their executions overlap.
+
+Tracing setup failures are contained. Instrumentation never retries application work after it has started, preventing duplicate tool or model side effects.
 
 ## Design direction
 
@@ -96,12 +124,12 @@ Planned sequence:
 2. Measure tool execution duration and active calls through `tools/execute`. ✅
 3. Export runtime metrics through OpenTelemetry instruments. ✅
 4. Add tool execution spans. ✅
-5. Instrument agent turn/step/request lifecycle.
+5. Instrument Agent turn/step/model-request lifecycle. ✅
 6. Add a local Collector/Prometheus/Jaeger/Grafana example.
 
 ## Privacy boundary
 
-Telemetry is metadata-first. Prompt content, tool arguments, tool result content, credentials, filesystem contents, exception messages, and stack traces are out of scope by default. Observability failures are contained and must not change the outcome of the underlying tool call.
+Telemetry is metadata-first. Prompt content, conversation messages, tool arguments, tool result content, credentials, filesystem contents, session ids, exception messages, and stack traces are out of scope by default. Observability failures are contained and must not change the outcome of the underlying Agent, model, or tool operation.
 
 ## License
 
