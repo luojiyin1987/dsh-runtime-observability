@@ -124,8 +124,9 @@ export class OpenTelemetryAgentTracing {
         const turn = numberField(data, 'turn')
         const step = numberField(data, 'step')
         const state = this.sessions.get(key)
-        const active = state?.step
-        if (active === undefined || turn !== active.turn || step !== active.step) return
+        if (state === undefined || state.step === undefined) return
+        const active = state.step
+        if (turn !== active.turn || step !== active.step) return
 
         safely(() => active.span.setAttribute(OUTCOME_ATTRIBUTE, 'completed'))
         this.endSpan(active, event.time)
