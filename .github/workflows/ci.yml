@@ -20,3 +20,23 @@ jobs:
       - run: npm install
       - run: npm run check
       - run: npm pack --dry-run
+
+  example-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Docker Compose model
+        run: docker compose -f examples/otel-stack/compose.yaml config
+      - name: Validate OpenTelemetry Collector config
+        run: |
+          docker run --rm \
+            -v "$PWD/examples/otel-stack/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro" \
+            otel/opentelemetry-collector-contrib:0.159.0 \
+            validate --config=/etc/otelcol-contrib/config.yaml
+      - name: Validate Prometheus config
+        run: |
+          docker run --rm \
+            -v "$PWD/examples/otel-stack/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v3.14.0 \
+            check config /etc/prometheus/prometheus.yml

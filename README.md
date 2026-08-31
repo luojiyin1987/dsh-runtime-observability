@@ -4,7 +4,7 @@ Runtime observability plugin for [DeepSeek Harness](https://github.com/deepseek-
 
 ## Status
 
-Early development. PR1 established the standalone plugin lifecycle and packaging contract. PR2 added backend-neutral `tools/execute` lifecycle aggregation. PR3 projects the same metadata-only lifecycle into OpenTelemetry Metrics. PR4 adds OpenTelemetry spans around each tool dispatch. PR5 traces Agent turns, steps, and Agent-loop model requests.
+Early development. PR1 established the standalone plugin lifecycle and packaging contract. PR2 added backend-neutral `tools/execute` lifecycle aggregation. PR3 projects the same metadata-only lifecycle into OpenTelemetry Metrics. PR4 adds OpenTelemetry spans around each tool dispatch. PR5 traces Agent turns, steps, and Agent-loop model requests. PR6 adds a reproducible local OpenTelemetry observability stack.
 
 ## Current scope
 
@@ -16,6 +16,7 @@ Early development. PR1 established the standalone plugin lifecycle and packaging
 - backend-neutral runtime snapshot
 - OpenTelemetry Counter / UpDownCounter / Histogram instruments
 - OpenTelemetry tool and Agent lifecycle spans
+- local Collector / Jaeger / Prometheus / Grafana example
 - Node.js 22/24 CI for typecheck, tests, build, and package dry-run
 - DSH bundle patch metadata
 
@@ -114,6 +115,32 @@ The LLM span is explicitly parented to the current step context. Tool spans use 
 
 Tracing setup failures are contained. Instrumentation never retries application work after it has started, preventing duplicate tool or model side effects.
 
+## Local observability stack
+
+A pinned Docker Compose example is available under [`examples/otel-stack`](./examples/otel-stack/README.md):
+
+```text
+DeepSeek Harness host
+        |
+        | OTLP
+        v
+OpenTelemetry Collector
+        |
+        +---- traces ----> Jaeger
+        |
+        +---- metrics ---> Prometheus
+                              |
+                              v
+                            Grafana
+```
+
+The example keeps exporter/SDK ownership outside the plugin. It provisions Prometheus and Jaeger as Grafana data sources and binds host-facing ports to loopback for local development.
+
+```sh
+cd examples/otel-stack
+docker compose up -d
+```
+
 ## Design direction
 
 The project complements DeepSeek Harness session telemetry by instrumenting runtime execution rather than copying prompt, tool argument, or tool result payloads.
@@ -125,7 +152,7 @@ Planned sequence:
 3. Export runtime metrics through OpenTelemetry instruments. ✅
 4. Add tool execution spans. ✅
 5. Instrument Agent turn/step/model-request lifecycle. ✅
-6. Add a local Collector/Prometheus/Jaeger/Grafana example.
+6. Add a local Collector/Prometheus/Jaeger/Grafana example. ✅
 
 ## Privacy boundary
 
