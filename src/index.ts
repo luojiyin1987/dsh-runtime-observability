@@ -61,11 +61,15 @@ export function apply(ctx: Context): void {
 
   ctx.on(
     'tools/execute',
-    (exec, next): Promise<ToolExecutionResult> =>
-      toolTracing.trace(
+    (exec, next): Promise<ToolExecutionResult> => {
+      const parent = exec.agent === undefined
+        ? undefined
+        : agentTracing.contextForSession(exec.agent.session.id)
+      return toolTracing.trace(
         exec.name,
         () => observer.observe(exec.name, next),
-        agentTracing.contextForSession(exec.agent.session.id),
-      ),
+        parent,
+      )
+    },
   )
 }
